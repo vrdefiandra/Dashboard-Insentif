@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Pengajuan Insentif</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #f4f7f6; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { width: 100%; max-width: 900px; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h2, h3 { color: #333; margin-bottom: 20px; text-align: center; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; font-size: 14px; }
+        input[type="text"], input[type="number"], input[type="file"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+        button { width: 100%; padding: 12px; background-color: #28a745; color: white; border: none; border-radius: 5px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button:hover { background-color: #218838; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        .alert { padding: 12px; margin-top: 15px; border-radius: 5px; display: none; font-weight: bold; }
+        .alert-danger { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .tc-box { background-color: #eef2f5; padding: 12px; border-left: 4px solid #007bff; margin-bottom: 20px; font-size: 13px; color: #444; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #007bff; color: white; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .table-responsive { overflow-x: auto; }
+        .status-db { text-align: center; font-weight: bold; margin-bottom: 15px; color: #007bff; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Form Pengajuan Insentif</h2>
+
+    <div class="tc-box">
+        <strong>Ketentuan Validasi Sistem (T&C):</strong>
+        <ul>
+            <li>Nomor Polis (PolicyNo) <b>wajib terdaftar</b> di Database Polis Settle.</li>
+            <li>Nomor Polis yang sama <b>tidak boleh diajukan dua kali</b> (mencegah duplikasi).</li>
+        </ul>
+    </div>
+
+    <div id="statusDb" class="status-db">Menghubungkan ke Google Sheets...</div>
+    <div id="alertBox" class="alert"></div>
+
+    <form id="incentiveForm">
+        <div class="form-group"><label>1. Nomor Polis (PolicyNo):</label><input type="text" id="noPolis" placeholder="Contoh: POL1001" required></div>
+        <div class="form-group"><label>2. Nomor Rangka:</label><input type="text" id="noRangka" required></div>
+        <div class="form-group"><label>3. Nomor Mesin:</label><input type="text" id="noMesin" required></div>
+        <div class="form-group"><label>4. Premi (Sebelum Admin - Rp):</label><input type="number" id="premi" required></div>
+        <div class="form-group"><label>5. Cabang Asuransi Astra (3 Huruf):</label><input type="text" id="cabangAstra" maxlength="3" style="text-transform: uppercase;" required></div>
+        <div class="form-group"><label>6. Cabang Dealer:</label><input type="text" id="cabangDealer" required></div>
+        <div class="form-group"><label>7. Nama Salesman Dealer:</label><input type="text" id="namaSales" required></div>
+        <div class="form-group"><label>8. Nomor Astrapay Salesman:</label><input type="text" id="noAstrapay" required></div>
+        <div class="form-group"><label>9. Nomor NPWP Salesman:</label><input type="text" id="noNpwp" required></div>
+        <div class="form-group"><label>10. Nomor KTP Salesman:</label><input type="text" id="noKtp" maxlength="16" required></div>
+        <div class="form-group"><label>11. Screenshot Polis Summary & Settlement:</label><input type="file" id="filePolis" accept="image/*" required></div>
+        <div class="form-group"><label>12. Screenshot Akun Astrapay:</label><input type="file" id="fileAstrapay" accept="image/*" required></div>
+
+        <button type="submit" id="btnSubmit" disabled>Memuat Database...</button>
+    </form>
+</div>
+
+<div class="container">
+    <h3>Data Hasil Pengajuan Masuk (Result Dashboard)</h3>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Waktu</th>
+                    <th>Cabang Astra</th>
+                    <th>Cabang Dealer</th>
+                    <th>Nama Sales</th>
+                    <th>No. Polis</th>
+                </tr>
+            </thead>
+            <tbody id="resultTableBody">
+                <tr><td colspan="5" style="text-align: center; color: #777;">Memuat riwayat pengajuan...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let dbPolisSettle = [];
+    let dbRekapPengajuan = [];
+
+    const baseUrl = "https://sheetdb.io/api/v1/2xo8pf9zwx39s";
+    
+    // NAMA TAB SESUAI PERMINTAAN ANDA:
+    const tabSettle = "Data Settle";  
+    const tabRekap = "Data Submit";    
+
+    // 1. Ambil data dari kedua tab Google Sheets
+    function loadDataSystem() {
+        // Ambil data Polis Settle
+        fetch(`${baseUrl}?sheet=${encodeURIComponent(tabSettle)}`)
+            .then(res => res.json())
+            .then(settleData => {
+                dbPolisSettle = settleData;
+                
+                // Ambil data Rekap Pengajuan (Data Submit)
+                return fetch(`${baseUrl}?sheet=${encodeURIComponent(tabRekap)}`);
+            })
+            .then(res => res.json())
+            .then(rekapData => {
+                dbRekapPengajuan = rekapData;
+                
+                document.getElementById('statusDb').innerText = `Sistem Siap (${dbPolisSettle.length} polis settle dimuat)`;
+                document.getElementById('btnSubmit').removeAttribute('disabled');
+                document.getElementById('btnSubmit').innerText = "Submit Pengajuan Insentif";
+                
+                updateTable(dbRekapPengajuan);
+            })
+            .catch(err => {
+                document.getElementById('statusDb').innerText = "Gagal memuat data dari Google Sheets! Periksa penulisan nama tab (sheet).";
+                document.getElementById('statusDb').style.color = "red";
+            });
+    }
+
+    loadDataSystem();
+
+    document.getElementById('incentiveForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const noPolis = document.getElementById('noPolis').value.trim().toUpperCase();
+        const cabangAstra = document.getElementById('cabangAstra').value.trim().toUpperCase();
+        const cabangDealer = document.getElementById('cabangDealer').value;
+        const namaSales = document.getElementById('namaSales').value;
+        const premi = document.getElementById('premi').value;
+
+        if (cabangAstra.length !== 3) {
+            showAlert("Peringatan: Cabang Asuransi Astra harus diisi tepat 3 huruf!", "danger");
+            return;
+        }
+
+        // --- T&C 2: Cek apakah PolicyNo ada di tab "Data Settle" ---
+        const isSettle = dbPolisSettle.some(row => {
+            const rowPolicy = (row.PolicyNo || row.policy_no || row.POLICYSNO || "").trim().toUpperCase();
+            return rowPolicy === noPolis;
+        });
+
+        if (!isSettle) {
+            showAlert("Pengajuan Ditolak (T&C): Nomor Polis (PolicyNo) ini belum terdaftar di database Polis Settle.", "danger");
+            return;
+        }
+
+        // --- T&C 1: Cek duplikasi dari tab "Data Submit" ---
+        const isAlreadySubmitted = dbRekapPengajuan.some(row => {
+            const rowPolicy = (row.PolicyNo || row.policy_no || row.POLICYSNO || "").trim().toUpperCase();
+            return rowPolicy === noPolis;
+        });
+
+        if (isAlreadySubmitted) {
+            showAlert("Pengajuan Ditolak (T&C): Nomor Polis (PolicyNo) ini sudah pernah diajukan sebelumnya!", "danger");
+            return;
+        }
+
+        // --- DATA BARU YANG DIKIRIM KE TAB "Data Submit" ---
+        const newSubmission = {
+            Waktu: new Date().toLocaleDateString('id-ID') + ' ' + new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'}),
+            CabangAstra: cabangAstra,
+            CabangDealer: cabangDealer,
+            NamaSales: namaSales,
+            PolicyNo: noPolis
+        };
+
+        // Kirim data ke tab "Data Submit" via SheetDB POST Request
+        fetch(`${baseUrl}?sheet=${encodeURIComponent(tabRekap)}`, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ data: [newSubmission] })
+        })
+        .then(response => response.json())
+        .then(data => {
+            showAlert("Pengajuan Insentif Berhasil Disubmit & Tersimpan di Pusat!", "success");
+            this.reset();
+            loadDataSystem(); // Refresh data agar tabel rekap langsung ter-update
+        })
+        .catch(error => {
+            showAlert("Gagal menyimpan data ke server pusat!", "danger");
+        });
+    });
+
+    function updateTable(data) {
+        const tbody = document.getElementById('resultTableBody');
+        tbody.innerHTML = '';
+
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #777;">Belum ada data pengajuan yang masuk.</td></tr>';
+            return;
+        }
+
+        // Tampilkan data terbaru di urutan paling atas
+        [...data].reverse().forEach(item => {
+            const row = `<tr>
+                <td>${item.Waktu || '-'}</td>
+                <td>${item.CabangAstra || '-'}</td>
+                <td>${item.CabangDealer || '-'}</td>
+                <td>${item.NamaSales || '-'}</td>
+                <td>${item.PolicyNo || '-'}</td>
+            </tr>`;
+            tbody.innerHTML += row;
+        });
+    }
+
+    function showAlert(message, type) {
+        const alertBox = document.getElementById('alertBox');
+        alertBox.innerText = message;
+        alertBox.className = `alert alert-${type === 'danger' ? 'danger' : 'success'}`;
+        alertBox.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+</script>
+
+</body>
+</html>
